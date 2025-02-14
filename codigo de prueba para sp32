@@ -1,0 +1,106 @@
+Estados Identificados:
+
+RESET - Estado inicial de la máquina.
+CERRADA - Indica que el sistema está en reposo con la compuerta cerrada.
+ABRIENDO - Activación del motor para abrir la compuerta.
+ABIERTA - Indica que la compuerta está completamente abierta.
+CERRANDO - Activación del motor para cerrar la compuerta.
+DETENIDA - Estado intermedio cuando el proceso se interrumpe.
+DESCONOCIDO - Estado de error o indefinido.
+
+
+
+
+
+#include <Arduino.h>
+
+// Definición de estados
+enum Estado {
+    RESET,
+    CERRADA,
+    ABRIENDO,
+    ABIERTA,
+    CERRANDO,
+    DETENIDA,
+    DESCONOCIDO
+};
+
+// Variables globales
+Estado estadoActual = RESET;
+Estado estadoAnterior = RESET;
+unsigned long ultimoTiempo = 0;
+const unsigned long intervalo = 50; // Timer de 50ms
+
+// Simulación de pines
+const int motorA = 5;
+const int motorC = 6;
+const int sensorLSA = 7;
+const int sensorLSC = 8;
+const int buzzer = 9;
+const int lampara = 10;
+
+void setup() {
+    pinMode(motorA, OUTPUT);
+    pinMode(motorC, OUTPUT);
+    pinMode(sensorLSA, INPUT);
+    pinMode(sensorLSC, INPUT);
+    pinMode(buzzer, OUTPUT);
+    pinMode(lampara, OUTPUT);
+    Serial.begin(115200);
+}
+
+void loop() {
+    unsigned long tiempoActual = millis();
+    if (tiempoActual - ultimoTiempo >= intervalo) {
+        ultimoTiempo = tiempoActual;
+        maquinaDeEstados();
+    }
+}
+
+void maquinaDeEstados() {
+    switch (estadoActual) {
+        case RESET:
+            digitalWrite(motorA, LOW);
+            digitalWrite(motorC, LOW);
+            estadoActual = CERRADA;
+            break;
+        
+        case CERRADA:
+            if (digitalRead(sensorLSA) == HIGH) {
+                estadoActual = ABRIENDO;
+            }
+            break;
+        
+        case ABRIENDO:
+            digitalWrite(motorA, HIGH);
+            if (digitalRead(sensorLSA) == LOW) {
+                estadoActual = ABIERTA;
+                digitalWrite(motorA, LOW);
+            }
+            break;
+        
+        case ABIERTA:
+            if (digitalRead(sensorLSC) == HIGH) {
+                estadoActual = CERRANDO;
+            }
+            break;
+        
+        case CERRANDO:
+            digitalWrite(motorC, HIGH);
+            if (digitalRead(sensorLSC) == LOW) {
+                estadoActual = CERRADA;
+                digitalWrite(motorC, LOW);
+            }
+            break;
+        
+        case DETENIDA:
+            digitalWrite(motorA, LOW);
+            digitalWrite(motorC, LOW);
+            break;
+        
+        default:
+            estadoActual = DESCONOCIDO;
+            break;
+    }
+    Serial.println(estadoActual);
+}
