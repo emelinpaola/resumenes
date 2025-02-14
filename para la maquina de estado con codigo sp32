@@ -1,0 +1,62 @@
+# Código para la máquina de estados en ESP32 con timer de 50ms
+
+from machine import Timer, Pin
+
+# Definición de pines
+lamp = Pin(2, Pin.OUT)
+buzzer = Pin(4, Pin.OUT)
+motor_A = Pin(5, Pin.OUT)
+motor_C = Pin(18, Pin.OUT)
+LSA = Pin(32, Pin.IN)
+LSC = Pin(33, Pin.IN)
+
+# Definición de estados
+ESTADO_INICIAL = 0
+ESTADO_ABIERTO = 1
+ESTADO_CERRADO = 2
+ESTADO_ALARMA = 3
+
+# Estado actual
+estado_actual = ESTADO_INICIAL
+
+def actualizar_estado():
+    global estado_actual
+    
+    if estado_actual == ESTADO_INICIAL:
+        if LSC.value() == 0:
+            estado_actual = ESTADO_CERRADO
+    elif estado_actual == ESTADO_CERRADO:
+        if LSA.value() == 0:
+            estado_actual = ESTADO_ABIERTO
+    elif estado_actual == ESTADO_ABIERTO:
+        if LSC.value() == 1 and LSA.value() == 1:
+            estado_actual = ESTADO_ALARMA
+    elif estado_actual == ESTADO_ALARMA:
+        estado_actual = ESTADO_INICIAL
+    
+    controlar_dispositivos()
+
+def controlar_dispositivos():
+    if estado_actual == ESTADO_CERRADO:
+        motor_A.value(0)
+        motor_C.value(0)
+        lamp.value(1)
+    elif estado_actual == ESTADO_ABIERTO:
+        motor_A.value(1)
+        motor_C.value(1)
+        lamp.value(0)
+    elif estado_actual == ESTADO_ALARMA:
+        buzzer.value(1)
+    else:
+        buzzer.value(0)
+        lamp.value(0)
+        motor_A.value(0)
+        motor_C.value(0)
+
+def timer_callback(t):
+    actualizar_estado()
+    print(f"Estado actual: {estado_actual}")
+
+# Configurar timer cada 50ms
+timer = Timer(0)
+timer.init(period=50, mode=Timer.PERIODIC, callback=timer_callback)
