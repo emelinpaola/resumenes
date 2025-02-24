@@ -1,0 +1,425 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include "esp_system.h"
+#include "esp_partition.h"
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "protocol_examples_common.h"
+
+#include "esp_log.h"
+#include "mqtt_client.h"
+#include "esp_tls.h"
+#include "esp_ota_ops.h"
+#include <sys/param.h>
+#define WIFI_SSID "emelin peguero"      
+#define WIFI_PASS "digitelaclave"   
+#define STATE_INIT 0
+#define STATE_CERRADO 1
+#define STATE_ABRIENDO 2
+#define STATE_ABIERTO 3
+#define STATE_CERRANDO 4
+#define STATE_ERR0R 5
+#define TRUE 1
+#define FALSE 0
+#define RT_MAX 180
+#define MQTT_TOPIC_STATE "/topic/state"
+#define MQTT_TOPIC_COMMAND "/topic/control"
+
+struct IO_VAR
+{
+    unsigned int LSA :1;
+    unsigned int LSC :1;
+    unsigned int BPP :1;
+    unsigned int LEDO :1;
+    unsigned int LEDC :1;
+    unsigned int MO :1;
+    unsigned int MC :1;
+    unsigned int RT;
+} io_var;
+
+int STATE_ACTUAL = STATE_INIT;
+int STATE_SIG = STATE_INIT;
+int STATE_ANTERIOR = STATE_INIT;
+
+static const char *TAG = "mqtts_example";
+
+#if CONFIG_BROKER_CERTIFICATE_OVERRIDDEN == 1
+static const uint8_t mqtt_eclipseprojects_io_pem_start[] = "-----BEGIN CERTIFICATE-----\n" CONFIG_BROKER_CERTIFICATE_OVERRIDE "\n-----END CERTIFICATE-----";
+#else
+extern const uint8_t mqtt_eclipseprojects_io_pem_start[] asm("_binary_mqtt_eclipseprojects_io_pem_start");
+#endif
+extern const uint8_t mqtt_eclipseprojects_io_pem_end[] asm("_binary_mqtt_eclipseprojects_io_pem_end");
+
+static void send_binary(esp_mqtt_client_handle_t client)
+{
+    esp_partition_mmap_handle_t out_handle;
+    const void *binary_address;
+    const esp_partition_t *partition = esp_ota_get_running_partition();
+    esp_partition_mmap(partition, 0, partition->size, ESP_PARTITION_MMAP_DATA, &binary_address, &out_handle);
+    int binary_size = MIN(CONFIG_BROKER_BIN_SIZE_TO_SEND, partition->size);
+    int msg_id = esp_mqtt_client_publish(client, "/topic/binary", binary_address, binary_size, 0, 0);
+    ESP_LOGI(TAG, "binary sent with msg_id=%d", msg_id);
+}
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
+    ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32, base, event_id);
+    esp_mqtt_event_handle_t event = event_data;
+    esp_mqtt_client_handle_t client = event->client;
+    int msg_id;
+    switch ((esp_mqtt_event_id_t)event_id) {
+    case MQTT_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+        msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
+        ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
+        break;
+    case MQTT_EVENT_DISCONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+        break;
+    case MQTT_EVENT_DATA:
+        ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+        printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
+        printf("DATA=%.*s\r\n", event->data_len, event->data);
+        if (strncmp(event->data, "send binary please", event->data_len) == 0) {
+            ESP_LOGI(TAG, "Sending the binary");
+            send_binary(client);
+        }
+        break;
+    default:
+        ESP_LOGI(TAG, "Other event id:%d", event->event_id);
+        break;
+    }
+}
+
+static void mqtt_app_start(void)
+{
+    const esp_mqtt_client_config_t mqtt_cfg = {
+        .broker = {
+            .address.uri = CONFIG_BROKER_URI,
+            .verification.certificate = (const char *)mqtt_eclipseprojects_io_pem_start
+        },
+    };
+
+    ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
+    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_start(client);
+}
+
+void app_main(void)
+{
+    ESP_LOGI(TAG, "[APP] Startup..");
+    ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
+
+    esp_log_level_set("*", ESP_LOG_INFO);
+    esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
+    esp_log_level_set("mqtt_example", ESP_LOG_VERBOSE);
+    esp_log_level_set("transport_base", ESP_LOG_VERBOSE);
+    esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
+    esp_log_level_set("transport", ESP_LOG_VERBOSE);
+    esp_log_level_set("outbox", ESP_LOG_VERBOSE);
+
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(example_connect());
+
+    // Inicializar la interfaz de red Wi-Fi
+    esp_netif_init();
+    esp_event_loop_create_default();
+
+    // Configuración Wi-Fi
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_wifi_set_mode(WIFI_MODE_STA);
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = "DEVIDSON_MATOS",
+            .password = "digitelaclave",
+        },
+    };
+    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    esp_wifi_start();
+
+    ESP_LOGI(TAG, "Conectando a Wi-Fi...");
+    esp_wifi_connect();
+
+    // Esperar a que se conecte a la red
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &wifi_event_handler, NULL);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_event_handler, NULL);
+
+    // Esperar hasta que se establezca la conexión Wi-Fi
+    while (esp_wifi_is_connected() == false) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(TAG, "Conexión Wi-Fi establecida.");
+
+    static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+        if (event_base == WIFI_EVENT) {
+            if (event_id == WIFI_EVENT_STA_CONNECTED) {
+                ESP_LOGI(TAG, "Conectado a Wi-Fi");
+            } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+                ESP_LOGI(TAG, "Desconectado de Wi-Fi");
+                esp_wifi_connect();
+            }
+        }
+    }
+
+ mqtt_app_start();
+
+    for (;;)
+    {
+        if (STATE_ACTUAL == STATE_INIT)
+        {
+            STATE_SIG = FUNC_INIT();
+        }
+
+        if (STATE_ACTUAL == STATE_CERRADO)
+        {
+            STATE_SIG = FUNC_CERRADO();
+        }
+
+        if (STATE_ACTUAL == STATE_ABRIENDO)
+        {
+            STATE_SIG = FUNC_ABRIENDO();
+        }
+
+        if (STATE_ACTUAL == STATE_ABIERTO)
+        {
+            STATE_SIG = FUNC_ABIERTO();
+        }
+
+        if (STATE_ACTUAL == STATE_CERRANDO)
+        {
+            STATE_SIG = FUNC_CERRANDO();
+        }
+
+        if (STATE_ACTUAL == STATE_ERR0R)
+        {
+            STATE_SIG = FUNC_ERROR();
+        }
+    }
+}
+
+int FUNC_INIT(void)
+{
+    STATE_ANTERIOR = STATE_INIT;
+    STATE_SIG = STATE_CERRADO;
+
+    for (;;)
+    {
+        if (io_var.LSA == FALSE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = FALSE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRADO;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == FALSE || io_var.LSA == FALSE && io_var.LSC == FALSE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRANDO;
+        }
+    }
+}
+
+int FUNC_CERRADO(void)
+{
+    STATE_ANTERIOR = STATE_ACTUAL;
+    STATE_ACTUAL = STATE_CERRADO;
+
+    unsigned int led_timer = 0;  // Temporizador para el parpadeo de LEDC
+
+    for (;;)
+    {
+        // Condición de parpadeo de LEDC
+        if (STATE_ACTUAL == STATE_CERRADO)
+        {
+            if (led_timer % 180000 == 0)  // 3 minutos (180000 ms)
+            {
+                io_var.LEDC = !io_var.LEDC;  // Cambiar el estado de LEDC (parpadear)
+            }
+            led_timer++;
+        }
+
+        if (io_var.BPP == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = TRUE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_ABRIENDO;
+        }
+
+        if (io_var.LSA == FALSE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRADO;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+    }
+}
+
+int FUNC_ABRIENDO(void)
+{
+    STATE_ANTERIOR = STATE_ACTUAL;
+    STATE_ACTUAL = STATE_ABRIENDO;
+
+    unsigned int timer = 0;
+    unsigned int led_timer = 0;  // Temporizador para el parpadeo de LEDO
+    unsigned int max_open_time = 240000;  // 4 minutos en milisegundos (240000 ms)
+
+    for (;;)
+    {
+        // Temporizador de apertura (4 minutos)
+        if (timer < max_open_time)
+        {
+            timer++;
+        }
+        else
+        {
+            io_var.MO = TRUE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_ABIERTO;
+        }
+
+        if (led_timer % 180000 == 0)  // 3 minutos (180000 ms)
+{
+    io_var.LEDC = !io_var.LEDC;  // Cambiar el estado de LEDC (parpadear)
+    led_timer = 0;  // Reiniciar el temporizador
+}
+     led_timer++;
+
+        if (io_var.LSA == FALSE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = FALSE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRADO;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+    }
+}
+
+int FUNC_ABIERTO(void)
+{
+    STATE_ANTERIOR = STATE_ACTUAL;
+    STATE_ACTUAL = STATE_ABIERTO;
+
+    for (;;)
+    {
+        if (io_var.BPP == TRUE)
+        {
+            io_var.MO = TRUE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRANDO;
+        }
+
+        if (io_var.LSA == FALSE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRADO;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+    }
+}
+
+int FUNC_CERRANDO(void)
+{
+    STATE_ANTERIOR = STATE_ACTUAL;
+    STATE_ACTUAL = STATE_CERRANDO;
+
+    for (;;)
+    {
+        if (io_var.LSA == TRUE && io_var.LSC == FALSE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = TRUE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = FALSE;
+            return STATE_CERRADO;
+        }
+
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+    }
+}
+
+int FUNC_ERROR(void)
+{
+    STATE_ANTERIOR = STATE_ACTUAL;
+    STATE_ACTUAL = STATE_ERR0R;
+
+    for (;;)
+    {
+        if (io_var.LSA == TRUE && io_var.LSC == TRUE)
+        {
+            io_var.MO = FALSE;
+            io_var.MC = FALSE;
+            io_var.LEDO = TRUE;
+            io_var.LEDC = TRUE;
+            return STATE_ERR0R;
+        }
+    }
+}
