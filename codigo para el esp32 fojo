@@ -1,0 +1,43 @@
+#include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
+
+#define BUTTON_PIN 4
+#define LED_PIN 2
+
+volatile uint32_t buttonPressDuration = 0;
+TimerHandle_t buttonTimer;
+TimerHandle_t ledTimer;
+
+void IRAM_ATTR buttonISR() {
+    static uint32_t lastPressTime = 0;
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        lastPressTime = millis();
+        digitalWrite(LED_PIN, HIGH);
+    } else {
+        buttonPressDuration = millis() - lastPressTime;
+        digitalWrite(LED_PIN, LOW);
+        xTimerChangePeriod(ledTimer, pdMS_TO_TICKS(buttonPressDuration), 0);
+        xTimerStart(ledTimer, 0);
+    }
+}
+
+void ledTimerCallback(TimerHandle_t xTimer) {
+    static bool ledState = false;
+    digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    ledState = !ledState;
+}
+
+void setup() {
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, CHANGE);
+    
+    buttonTimer = xTimerCreate("ButtonTimer", pdMS_TO_TICKS(50), pdTRUE, NULL, NULL);
+    ledTimer = xTimerCreate("LedTimer", pdMS_TO_TICKS(100), pdTRUE, NULL, ledTimerCallback);
+}
+
+void loop() {
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
