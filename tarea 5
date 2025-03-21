@@ -1,0 +1,59 @@
+#include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+
+#define BUTTON_PIN  18
+#define LED_PIN     2
+
+volatile uint32_t pressTime = 0;
+volatile bool buttonPressed = false;
+TimerHandle_t timerCapture, timerBlink;
+QueueHandle_t queueBlink;
+
+void IRAM_ATTR buttonISR() {
+    static uint32_t lastPress = 0;
+    uint32_t now = millis();
+    if (digitalRead(BUTTON_PIN) == LOW) {
+        pressTime = now;
+        digitalWrite(LED_PIN, HIGH);
+    } else {
+        uint32_t duration = now - pressTime;
+        xQueueSendFromISR(queueBlink, &duration, NULL);
+        digitalWrite(LED_PIN, LOW);
+    }
+}
+
+void vBlinkCallback(TimerHandle_t xTimer) {
+    static bool ledState = false;
+    digitalWrite(LED_PIN, ledState);
+    ledState = !ledState;
+}
+
+void vCaptureCallback(TimerHandle_t xTimer) {
+    uint32_t duration;
+    if (xQueueReceive(queueBlink, &duration, 0)) {
+        xTimerChangePeriod(timerBlink, pdMS_TO_TICKS(500), 0);
+        xTimerStart(timerBlink, 0);
+        vTaskDelay(pdMS_TO_TICKS(duration));
+        xTimerStop(timerBlink, 0);
+    }
+}
+
+void setup() {
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, CHANGE);
+    
+    queueBlink = xQueueCreate(10, sizeof(uint32_t));
+    timerCapture = xTimerCreate("Capture", pdMS_TO_TICKS(100), pdTRUE, 0, vCaptureCallback);
+    timerBlink = xTimerCreate("Blink", pdMS_TO_TICKS(500), pdTRUE, 0, vBlinkCallback);
+    
+    xTimerStart(timerCapture, 0);
+}
+
+void loop() {
+    vTaskDelay(portMAX_DELAY);
+}
