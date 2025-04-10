@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Emulador 555 con ESP32</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Emulador de Temporizador 555</h1>
+
+  <label for="mode">Modo:</label>
+  <select id="mode" onchange="updateForm()">
+    <option value="astable">Astable</option>
+    <option value="monostable">Monostable</option>
+    <option value="pwm">PWM</option>
+  </select>
+
+  <div id="inputs"></div>
+
+  <button onclick="enviar()">Ejecutar</button>
+  <button onclick="detener()">Detener</button>
+
+  <!-- Circuitos -->
+  <div class="circuit" id="img_astable">
+    <h3>Circuito Astable</h3>
+    <img src="ChatGPT Image 9 abr 2025, 11_41_01.png" alt="Circuito astable">
+  </div>
+
+  <div class="circuit" id="img_monostable">
+    <h3>Circuito Monostable</h3>
+    <img src="ChatGPT Image 9 abr 2025, 11_56_51.png" alt="Circuito monostable">
+  </div>
+
+  <div class="circuit" id="img_pwm">
+    <h3>Circuito PWM</h3>
+    <img src="ChatGPT Image 9 abr 2025, 12_05_44.png" alt="Circuito pwm">
+  </div>
+
+  <!-- Resultados -->
+  <div id="resultados"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>

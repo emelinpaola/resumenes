@@ -1,0 +1,30 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #e3f2fd; /* Fondo azul claro */
+    padding: 20px;
+  }
+  
+  label {
+    display: block;
+    margin-top: 10px;
+  }
+  
+  img {
+    max-width: 300px;
+  }
+  
+  button {
+    margin-top: 10px;
+    margin-right: 10px;
+  }
+  
+  #resultados {
+    margin-top: 20px;
+    font-weight: bold;
+  }
+  
+  .circuit {
+    display: none;
+    margin-top: 10px;
+  }
+  
