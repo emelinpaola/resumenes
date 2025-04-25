@@ -1,0 +1,108 @@
+#include  <WiFi.h>
+#include <ESPAsyncWebServer.h>
+
+const char* ssid = "Emulador555";
+const char* password = "12345678";
+
+AsyncWebServer server(80);
+
+// Pines
+#define PWM_PIN 25
+#define BUTTON_PIN 0
+#define POT_PIN 34
+
+// PWM
+int pwmChannel = 0;
+int pwmResolution = 10; // 0-1023
+bool monostableActive = false;
+
+// HTML embebido
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head><title>Emulador NE555</title></head>
+<body>
+  <h2>Emulador de NE555</h2>
+  <form action="/ejecutar" method="GET">
+    <label>Modo:</label>
+    <select name="modo">
+      <option value="astable">Astable</option>
+      <option value="monostable">Monostable</option>
+      <option value="pwm">PWM</option>
+    </select><br><br>
+    R1 (Ohm): <input type="number" name="r1"><br>
+    R2 (Ohm): <input type="number" name="r2"><br>
+    C1 (uF): <input type="number" name="c1"><br>
+    <button type="submit">Ejecutar</button>
+  </form><br>
+  <button onclick="fetch('/detener')">Detener</button>
+</body>
+</html>
+)rawliteral";
+
+// Interrupción del botón para monostable
+void IRAM_ATTR onButtonPress() {
+  monostableActive = true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.softAP(ssid, password);
+  Serial.println(WiFi.softAPIP());
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(BUTTON_PIN, onButtonPress, FALLING);
+
+  ledcSetup(pwmChannel, 1000, pwmResolution);
+  ledcAttachPin(PWM_PIN, pwmChannel);
+
+  // Rutas del servidor
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html);
+  });
+
+  server.on("/ejecutar", HTTP_GET, [](AsyncWebServerRequest *request){
+    String modo = request->getParam("modo")->value();
+    float R1 = request->getParam("r1")->value().toFloat();
+    float R2 = request->getParam("r2")->value().toFloat();
+    float C1 = request->getParam("c1")->value().toFloat() / 1000000.0;
+
+    if (modo == "astable") {
+      float T1 = 0.693 * (R1 + R2) * C1;
+      float T2 = 0.693 * R2 * C1;
+      float freq = 1.0 / (T1 + T2);
+      float duty = (T1 / (T1 + T2)) * 100;
+      ledcWriteTone(pwmChannel, freq);
+      ledcWrite(pwmChannel, (int)(duty / 100.0 * 1023));
+      request->send(200, "text/plain", "Modo Astable: Frecuencia=" + String(freq) + " Hz, Duty=" + String(duty) + "%");
+    }
+    else if (modo == "monostable") {
+      float T = 1.1 * R1 * C1;
+      monostableActive = false;
+      request->send(200, "text/plain", "Modo Monostable: Pulsa el botón físico para activar. Pulso de " + String(T) + " seg");
+    }
+    else if (modo == "pwm") {
+      int pot = analogRead(POT_PIN);
+      float duty = (pot / 4095.0) * 100;
+      ledcWriteTone(pwmChannel, 1000); // 1kHz base
+      ledcWrite(pwmChannel, (int)(duty / 100.0 * 1023));
+      request->send(200, "text/plain", "Modo PWM: DutyCycle=" + String(duty) + "%");
+    }
+  });
+
+  server.on("/detener", HTTP_GET, [](AsyncWebServerRequest *request){
+    ledcWrite(pwmChannel, 0);
+    request->send(200, "text/plain", "Señal detenida.");
+  });
+
+  server.begin();
+}
+
+void loop() {
+  if (monostableActive) {
+    monostableActive = false;
+    ledcWrite(pwmChannel, 1023);  // Encendido total
+    delay(1000);                  // 1 segundo (reemplazar por cálculo real)
+    ledcWrite(pwmChannel, 0);     // Apagar
+  }
+}
