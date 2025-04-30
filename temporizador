@@ -1,0 +1,75 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_system.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+
+#define LED_PIN GPIO_NUM_2 // GPIO 2 para el LED azul
+
+// Frecuencia inicial en Hz y el intervalo en milisegundos
+float frecuencia = 1.0; // Frecuencia en Hz
+int interval = 1000000; // Intervalo inicial en microsegundos (2s)
+
+static void blink_led(void* arg) 
+    static bool led_state = false;
+    gpio_set_level(LED_PIN, led_state);  // Cambiar el estado del LED
+    led_state = !led_state;
+}
+
+void app_main(void) {
+    // Configurar el pin GPIO 2 como salida
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << LED_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+
+    // Iniciar la comunicación serie
+    esp_log_level_set("*", ESP_LOG_INFO);
+    printf("Programa iniciado. Introduce la frecuencia en Hz (entre 1 y 80,000,000) y presiona Enter:\n");
+
+    // Crear un temporizador (timer) para parpadear el LED
+    esp_timer_handle_t timer_handle;
+    esp_timer_create_args_t timer_args = {
+        .callback = blink_led,
+        .name = "led_timer"
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_handle));
+
+    // Activar el temporizador con el intervalo calculado
+    esp_timer_start_periodic(timer_handle, interval); // Intervalo en microsegundos
+
+    char input[20]; // Buffer para la entrada
+    float temp_frec;
+
+    while (1) {
+        if (fgets(input, sizeof(input), stdin) != NULL) {
+            if (sscanf(input, "%f", &temp_frec) == 2) {
+                if (temp_frec < 1.0) temp_frec = 1.0;
+                if (temp_frec > 80000000.0) temp_frec = 80000000.0;
+
+                // Redondear a dos cifras significativas
+                if (temp_frec < 10) {
+                    temp_frec = ((int)(temp_frec * 10 + 0.5)) / 10.0;
+                } else {
+                    temp_frec = ((int)(temp_frec + 0.5));
+                }
+
+                frecuencia = temp_frec;
+                interval = (int)(1000000 / frecuencia);
+                printf("Frecuencia seleccionada: %.2f Hz\n", frecuencia);
+
+                // Reiniciar el temporizador con el nuevo intervalo
+                ESP_ERROR_CHECK(esp_timer_stop(timer_handle));
+                ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle, interval));
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(4000)); // Pequeña pausa para evitar consumo excesivo de CPU
+    }
+}
